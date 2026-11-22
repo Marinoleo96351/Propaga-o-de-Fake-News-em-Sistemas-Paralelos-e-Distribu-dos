@@ -1,0 +1,3 @@
+# Usado só para gráficos e visualização (melhorias 12 e 13).
+# Não participa do cálculo e não entra na regra de proibição do enunciado.
+matplotlib

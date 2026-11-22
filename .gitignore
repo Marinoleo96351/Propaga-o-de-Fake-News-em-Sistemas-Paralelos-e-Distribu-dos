@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+experimentos/resultados/*.csv
+experimentos/graficos/*.png
+*.grade
