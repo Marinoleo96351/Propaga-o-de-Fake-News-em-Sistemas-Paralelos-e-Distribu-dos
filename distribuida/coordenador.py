@@ -73,6 +73,11 @@ def aguardar_trabalhadores(servidor, quantidade):
             conexao.close()
             raise
 
+    identificadores = sorted(trabalhadores.keys())
+
+    if identificadores != list(range(1, quantidade + 1)):
+        raise ValueError("Os IDs dos trabalhadores devem começar em 1 e ser consecutivos.")
+
     return trabalhadores
 
 
@@ -83,28 +88,41 @@ def executar_geracao(
     colunas,
     limiar,
 ):
-    """Distribui uma geração e reúne os resultados."""
+    """Distribui blocos com linhas de fronteira e reúne os resultados."""
 
     intervalos = dividir_intervalos(linhas, len(trabalhadores))
 
-    grade_atual = codificar_grade(grade)
     grade_proxima = bytearray(linhas * colunas)
-
     contagem_total = [0, 0, 0]
 
-    # Envia as tarefas para todos os trabalhadores.
+    # Envia para cada trabalhador seu bloco e as linhas de fronteira.
     for identificador, conexao in trabalhadores.items():
         inicio, fim = intervalos[identificador - 1]
+
+        inicio_bloco = max(0, inicio - 1)
+        fim_bloco = min(linhas, fim + 1)
+
+        bloco = bytearray(
+            grade[
+                inicio_bloco * colunas:
+                fim_bloco * colunas
+            ]
+        )
+
+        inicio_local = inicio - inicio_bloco
+        fim_local = inicio_local + (fim - inicio)
 
         tarefa = criar_mensagem(
             "TAREFA",
             trabalhador=identificador,
-            linhas=linhas,
+            linhas_locais=fim_bloco - inicio_bloco,
             colunas=colunas,
+            inicio_local=inicio_local,
+            fim_local=fim_local,
             inicio=inicio,
             fim=fim,
             limiar=limiar,
-            grade=grade_atual,
+            grade=codificar_grade(bloco),
         )
 
         enviar_mensagem(conexao, tarefa)
