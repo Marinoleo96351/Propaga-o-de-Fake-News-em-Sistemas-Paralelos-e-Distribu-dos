@@ -15,24 +15,17 @@ from distribuida.protocolo import (
 
 
 def dividir_intervalos(linhas, quantidade_trabalhadores):
-    """Divide as linhas da grade entre os trabalhadores."""
-
-    if quantidade_trabalhadores < 1:
-        raise ValueError("É necessário pelo menos um trabalhador.")
-
-    if quantidade_trabalhadores > linhas:
-        raise ValueError("Não pode haver mais trabalhadores que linhas.")
+    if quantidade_trabalhadores < 1 or quantidade_trabalhadores > linhas:
+        raise ValueError("Quantidade de trabalhadores inválida.")
 
     intervalos = []
     base = linhas // quantidade_trabalhadores
     resto = linhas % quantidade_trabalhadores
-
     inicio = 0
 
     for i in range(quantidade_trabalhadores):
         quantidade = base + (1 if i < resto else 0)
         fim = inicio + quantidade
-
         intervalos.append((inicio, fim))
         inicio = fim
 
@@ -40,8 +33,6 @@ def dividir_intervalos(linhas, quantidade_trabalhadores):
 
 
 def aguardar_trabalhadores(servidor, quantidade):
-    """Aceita e registra as conexões dos trabalhadores."""
-
     trabalhadores = {}
 
     print(f"Aguardando {quantidade} trabalhadores...")
@@ -53,122 +44,67 @@ def aguardar_trabalhadores(servidor, quantidade):
             mensagem = receber_mensagem(conexao)
 
             if mensagem["tipo"] != "REGISTRO":
-                raise ValueError("Mensagem de registro inválida.")
+                raise ValueError("Registro inválido.")
 
             identificador = mensagem["trabalhador"]
+            porta_vizinho = mensagem["porta_vizinho"]
 
-            if not isinstance(identificador, int) or identificador < 1:
-                raise ValueError("Identificador de trabalhador inválido.")
+            if (
+                type(identificador) is not int
+                or identificador < 1
+                or identificador > quantidade
+            ):
+                raise ValueError("Identificador inválido.")
 
             if identificador in trabalhadores:
-                raise ValueError("Trabalhador já registrado.")
+                raise ValueError("Trabalhador duplicado.")
 
-            trabalhadores[identificador] = conexao
+            if type(porta_vizinho) is not int or not 1 <= porta_vizinho <= 65535:
+                raise ValueError("Porta de vizinho inválida.")
 
-            print(
-                f"Trabalhador {identificador} conectado: {endereco}"
-            )
+            trabalhadores[identificador] = {
+                "conexao": conexao,
+                "porta": porta_vizinho,
+                "endereco": endereco[0],
+            }
+
+            print(f"Trabalhador {identificador} conectado.")
 
         except Exception:
             conexao.close()
             raise
 
-    identificadores = sorted(trabalhadores.keys())
-
-    if identificadores != list(range(1, quantidade + 1)):
-        raise ValueError("Os IDs dos trabalhadores devem começar em 1 e ser consecutivos.")
+    if sorted(trabalhadores) != list(range(1, quantidade + 1)):
+        raise ValueError("IDs dos trabalhadores inválidos.")
 
     return trabalhadores
 
 
-def executar_geracao(
-    trabalhadores,
-    grade,
-    linhas,
-    colunas,
-    limiar,
-):
-    """Distribui blocos com linhas de fronteira e reúne os resultados."""
+def configurar_vizinhos(trabalhadores):
+    portas = {
+        str(identificador): dados["porta"]
+        for identificador, dados in trabalhadores.items()
+    }
 
-    intervalos = dividir_intervalos(linhas, len(trabalhadores))
+    quantidade = len(trabalhadores)
 
-    grade_proxima = bytearray(linhas * colunas)
-    contagem_total = [0, 0, 0]
+    for identificador, dados in trabalhadores.items():
+        vizinhos = []
 
-    # Envia para cada trabalhador seu bloco e as linhas de fronteira.
-    for identificador, conexao in trabalhadores.items():
-        inicio, fim = intervalos[identificador - 1]
+        if identificador > 1:
+            vizinhos.append(identificador - 1)
 
-        inicio_bloco = max(0, inicio - 1)
-        fim_bloco = min(linhas, fim + 1)
+        if identificador < quantidade:
+            vizinhos.append(identificador + 1)
 
-        bloco = bytearray(
-            grade[
-                inicio_bloco * colunas:
-                fim_bloco * colunas
-            ]
+        enviar_mensagem(
+            dados["conexao"],
+            criar_mensagem(
+                "CONFIGURACAO",
+                vizinhos=vizinhos,
+                portas=portas,
+            ),
         )
-
-        inicio_local = inicio - inicio_bloco
-        fim_local = inicio_local + (fim - inicio)
-
-        tarefa = criar_mensagem(
-            "TAREFA",
-            trabalhador=identificador,
-            linhas_locais=fim_bloco - inicio_bloco,
-            colunas=colunas,
-            inicio_local=inicio_local,
-            fim_local=fim_local,
-            inicio=inicio,
-            fim=fim,
-            limiar=limiar,
-            grade=codificar_grade(bloco),
-        )
-
-        enviar_mensagem(conexao, tarefa)
-
-    # Recebe os resultados e monta a próxima geração.
-    for identificador, conexao in trabalhadores.items():
-        resultado = receber_mensagem(conexao)
-
-        if resultado["tipo"] != "RESULTADO":
-            raise ValueError("Resultado inesperado.")
-
-        if resultado["trabalhador"] != identificador:
-            raise ValueError("Resultado de trabalhador incorreto.")
-
-        inicio, fim = intervalos[identificador - 1]
-
-        if resultado["inicio"] != inicio or resultado["fim"] != fim:
-            raise ValueError("Intervalo recebido incorreto.")
-
-        parte_grade = decodificar_grade(resultado["grade"])
-
-        tamanho_esperado = (fim - inicio) * colunas
-
-        if len(parte_grade) != tamanho_esperado:
-            raise ValueError("Tamanho da grade recebida incorreto.")
-
-        inicio_grade = inicio * colunas
-        fim_grade = fim * colunas
-
-        grade_proxima[inicio_grade:fim_grade] = parte_grade
-
-        contagem = resultado["contagem"]
-
-        if not isinstance(contagem, list) or len(contagem) != 3:
-            raise ValueError("Contagem de estados inválida.")
-
-        if any(type(valor) is not int or valor < 0 for valor in contagem):
-            raise ValueError("Valores da contagem inválidos.")
-
-        for i in range(3):
-            contagem_total[i] += contagem[i]
-
-    if sum(contagem_total) != linhas * colunas:
-        raise ValueError("A contagem total de células está incorreta.")
-
-    return grade_proxima, contagem_total
 
 
 def executar_simulacao(
@@ -180,7 +116,7 @@ def executar_simulacao(
     semente,
     limiar,
 ):
-    """Executa todas as gerações da simulação."""
+    intervalos = dividir_intervalos(linhas, len(trabalhadores))
 
     grade = criar_grade(
         linhas,
@@ -191,23 +127,64 @@ def executar_simulacao(
 
     print("\nSimulação iniciada!")
 
-    for geracao in range(1, geracoes + 1):
-        grade, contagem = executar_geracao(
-            trabalhadores,
-            grade,
-            linhas,
-            colunas,
-            limiar,
+    for identificador, dados in trabalhadores.items():
+        inicio, fim = intervalos[identificador - 1]
+
+        bloco = grade[inicio * colunas:fim * colunas]
+
+        enviar_mensagem(
+            dados["conexao"],
+            criar_mensagem(
+                "TAREFA",
+                linhas=fim - inicio,
+                colunas=colunas,
+                geracoes=geracoes,
+                limiar=limiar,
+                grade=codificar_grade(bloco),
+            ),
         )
 
-        print(
-            f"Geração {geracao}: "
-            f"Ignorantes={contagem[0]}, "
-            f"Espalhadores={contagem[1]}, "
-            f"Inativos={contagem[2]}"
-        )
+    grade_final = bytearray(linhas * colunas)
+    contagem_total = [0, 0, 0]
 
-    return grade
+    for identificador, dados in trabalhadores.items():
+        resultado = receber_mensagem(dados["conexao"])
+
+        if resultado["tipo"] != "RESULTADO":
+            raise ValueError("Resultado inesperado.")
+
+        if resultado["trabalhador"] != identificador:
+            raise ValueError("Resultado de trabalhador incorreto.")
+
+        inicio, fim = intervalos[identificador - 1]
+        parte = decodificar_grade(resultado["grade"])
+
+        tamanho_esperado = (fim - inicio) * colunas
+
+        if len(parte) != tamanho_esperado:
+            raise ValueError("Tamanho do resultado incorreto.")
+
+        grade_final[inicio * colunas:fim * colunas] = parte
+
+        contagem = resultado["contagem"]
+
+        if not isinstance(contagem, list) or len(contagem) != 3:
+            raise ValueError("Contagem inválida.")
+
+        for i in range(3):
+            contagem_total[i] += contagem[i]
+
+    if sum(contagem_total) != linhas * colunas * geracoes:
+        raise ValueError("Contagem acumulada inválida.")
+
+    print(
+        f"Resultado final: "
+        f"Ignorantes={grade_final.count(0)}, "
+        f"Espalhadores={grade_final.count(1)}, "
+        f"Inativos={grade_final.count(2)}"
+    )
+
+    return grade_final
 
 
 def main():
@@ -219,7 +196,7 @@ def main():
     parser.add_argument("--porta", type=int, default=5000)
     parser.add_argument("--linhas", type=int, default=20)
     parser.add_argument("--colunas", type=int, default=20)
-    parser.add_argument("--geracoes", type=int, default=10)
+    parser.add_argument("--geracoes", type=int, default=5)
     parser.add_argument("--trabalhadores", type=int, default=2)
     parser.add_argument("--percentual", type=float, default=0.10)
     parser.add_argument("--semente", type=int, default=42)
@@ -235,12 +212,12 @@ def main():
         parser.error("Gerações não pode ser negativo.")
 
     if not 0 <= args.percentual <= 1:
-        parser.error("O percentual deve estar entre 0 e 1.")
+        parser.error("Percentual deve estar entre 0 e 1.")
 
-    if args.limiar < 0 or args.limiar > 8:
-        parser.error("O limiar deve estar entre 0 e 8.")
+    if not 0 <= args.limiar <= 8:
+        parser.error("Limiar deve estar entre 0 e 8.")
 
-    if args.trabalhadores < 1 or args.trabalhadores > args.linhas:
+    if not 1 <= args.trabalhadores <= args.linhas:
         parser.error("Quantidade de trabalhadores inválida.")
 
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -261,6 +238,8 @@ def main():
             servidor,
             args.trabalhadores,
         )
+
+        configurar_vizinhos(trabalhadores)
 
         grade_final = executar_simulacao(
             trabalhadores,
@@ -285,7 +264,9 @@ def main():
         print("\nSimulação interrompida.")
 
     finally:
-        for conexao in trabalhadores.values():
+        for dados in trabalhadores.values():
+            conexao = dados["conexao"]
+
             try:
                 enviar_mensagem(
                     conexao,
