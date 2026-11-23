@@ -134,6 +134,10 @@ Os testes `testes/testar_paralelo_vinicius.py` comparam threads e processos à
 função sequencial comum e verificam que a probabilidade não muda quando o
 número de faixas é alterado.
 
+Os testes `testes/testar_melhorias.py` verificam as melhorias de bots e estatísticas:
+sem bots, a simulação é idêntica à sequencial; os bots nunca ficam inativos; e as
+estatísticas batem com valores calculados à mão.
+
 Também é possível verificar a compilação dos arquivos Python:
 
 ```bash
@@ -162,10 +166,22 @@ distribuida/
 testes/
 ├── __init__.py
 ├── testar_correcao.py
-└── testar_paralelo_vinicius.py
+├── testar_paralelo_vinicius.py
+└── testar_melhorias.py
 
 experimentos/
-└── comparar_paralelismo.py
+├── comparar_paralelismo.py
+├── executar_experimentos.py
+├── medir_coordenador.py
+├── medir_trabalhador.py
+└── gerar_graficos.py
+
+melhorias/
+├── bots.py
+├── animacao.py
+├── estatisticas.py
+├── graficos_estatisticas.py
+└── saidas/
 
 original/
 └── FakeNews.py
@@ -216,3 +232,325 @@ Responsável pela base do projeto, sobre a qual as demais versões são constru�
 - **`testes/testar_paralelo_vinicius.py`**: compara os resultados das versões paralelas com o cálculo sequencial comum e verifica consistência entre faixas.
 - **`experimentos/comparar_paralelismo.py`**: mede tempos de threads e processos e grava tempos, medianas, speedup e eficiência em CSV para análise do efeito do GIL.
 - **Melhorias**: comparação entre threads e processos e probabilidade de convencimento configurável.
+
+## Experimentos de desempenho
+
+**O que medem.** Os mesmos cenários são executados em todas as versões, como pede o
+enunciado. Cada experimento varia um fator por vez em torno de um cenário base
+(grade 500 x 500, 30 gerações, 5% de espalhadores iniciais, limiar 2), e cada
+execução é repetida 5 vezes:
+
+| Experimento | O que varia | Trabalhadores nas versões paralelas |
+| --- | --- | --- |
+| `trabalhadores` | número de threads, processos ou nós | 1, 2, 4 e 8 |
+| `tamanho` | grade 250 x 250, 500 x 500 e 1000 x 1000 | 4 |
+| `geracoes` | 10, 30 e 60 gerações | 4 |
+| `percentual` | 1%, 5% e 20% de espalhadores iniciais | 4 |
+
+**Como os tempos são medidos.**
+
+- Sequencial, threads e processos rodam como programas separados (`subprocess`),
+  sempre a partir do mesmo arquivo de grade inicial (gerado com `comum/grade.py`),
+  executando todas as gerações (`--sem-parada-antecipada`) e sem imprimir nada por
+  geração (`--sem-impressao`). As versões paralelas recebem `--trabalhadores p`.
+- O tempo registrado é o que o próprio programa imprime em `Tempo total: X s`, medido
+  com `time.perf_counter()` em volta da simulação. A inicialização do Python e a
+  leitura da grade ficam de fora.
+- A versão distribuída roda na mesma máquina: um coordenador e p trabalhadores, cada um
+  num processo, conversando por sockets TCP em `127.0.0.1`. O código da pasta
+  `distribuida/` não mede tempo, então os experimentos usam dois scripts que
+  reaproveitam as funções dela sem alterá-las:
+  - `experimentos/medir_coordenador.py` faz o mesmo que o coordenador e mede o tempo de
+    `executar_simulacao` (envio dos blocos, todas as gerações e recebimento dos
+    resultados), depois que todos os trabalhadores já se conectaram;
+  - `experimentos/medir_trabalhador.py` roda o trabalhador trocando a função
+    `trocar_fronteiras` por uma versão que mede quanto tempo se passa dentro dela.
+
+  A distribuída cria a grade com `criar_grade` e a mesma semente, então parte
+  exatamente da mesma grade dos arquivos. Antes das medições, conferimos que ela chega à
+  mesma grade final que a sequencial com 1, 2, 4 e 8 trabalhadores.
+- As versões se alternam dentro de cada repetição, para que uma variação da máquina
+  (temperatura, frequência da CPU) não prejudique uma versão só. As repetições e o
+  desvio padrão seguem a recomendação de sempre relatar a variabilidade das medições
+  (Hoefler; Belli, 2015).
+- Se um programa falhar ou não imprimir o tempo, o script para em vez de gravar um
+  valor inválido no CSV.
+
+**O que cada tempo inclui.** As versões não medem exatamente o mesmo intervalo, e isso
+aparece nos resultados. A versão com processos inclui a criação dos processos (com
+`spawn`) e da memória compartilhada. A distribuída não inclui a criação dos processos
+nem as conexões, porque os trabalhadores já estão conectados quando o tempo começa,
+mas inclui a criação da grade pelo coordenador (no máximo 10 ms, na grade 1000 x 1000)
+e o envio e o recebimento da grade inteira, codificada em Base64 dentro de mensagens JSON.
+
+O script `experimentos/comparar_paralelismo.py`, do Vinicius, é complementar: compara
+só threads e processos, usando a mediana e a própria versão com 1 trabalhador como base.
+Os experimentos desta seção comparam as quatro versões com a sequencial.
+
+**Como rodar.** O `matplotlib`, usado só nos gráficos, fica num ambiente virtual:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate          # no Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+python experimentos/executar_experimentos.py --maquina notebook --repeticoes 5
+python experimentos/gerar_graficos.py --maquina notebook
+```
+
+**Arquivos gerados**, em `experimentos/resultados/` e `experimentos/graficos/`:
+
+- `tempos_<maquina>.csv`: uma linha por execução (dado bruto, sem média).
+- `ambiente_<maquina>.txt`: configuração experimental (processador, núcleos físicos e
+  lógicos, memória RAM, sistema operacional, versão do Python) e os cenários usados.
+- `resumo_<maquina>.csv`: média, desvio padrão, speedup e eficiência de cada
+  configuração; é a tabela comparativa da apresentação.
+- `tempo_por_trabalhadores.png`, `speedup.png`, `eficiencia.png`,
+  `tempo_por_tamanho.png`, `tempo_por_geracoes.png`, `tempo_por_percentual.png` e
+  `comunicacao.png`. Um gráfico só é gerado quando o CSV tem os dados de que ele precisa.
+
+**Indicadores.** Com p = número de trabalhadores (threads, processos ou nós):
+
+- **Speedup** `S(p) = T_sequencial / T(p)`: quantas vezes a versão é mais rápida que a
+  sequencial. O ideal é `S(p) = p`.
+- **Eficiência** `E(p) = S(p) / p`: quanto de cada trabalhador foi aproveitado. O ideal
+  é 100%; abaixo disso, parte do tempo foi gasta criando threads ou processos,
+  sincronizando as gerações, comunicando fronteiras ou esperando faixas mais lentas.
+
+`T_sequencial` é o tempo médio da `sequencial.py` no mesmo cenário, ou seja, é o speedup
+absoluto, e não o relativo à própria versão paralela com 1 trabalhador. Por isso
+`S(1) < 1` mostra o custo extra da estrutura paralela. As médias e o desvio padrão
+amostral são calculados com o módulo `statistics`. As definições seguem Grama et al.
+(2003). Na análise, duas leis clássicas ajudam a interpretar os gráficos: a parte do
+trabalho que não se divide entre os trabalhadores limita o speedup máximo (Amdahl,
+1967), e problemas maiores tendem a aproveitar melhor mais trabalhadores, porque o
+cálculo cresce mais que o custo fixo de coordenação (Gustafson, 1988).
+
+**Comunicação.** O tempo de comunicação registrado é a média, entre os trabalhadores,
+do tempo gasto em `trocar_fronteiras`. Ele inclui codificar as linhas de fronteira
+(Base64 em JSON), enviá-las, receber as dos vizinhos e esperar o vizinho mais lento
+terminar a geração anterior; portanto mede comunicação e sincronização juntas. O
+gráfico `comunicacao.png` divide o tempo total da distribuída nessa parte e no
+restante (cálculo, envio e recebimento da grade).
+
+**Observação para a análise.** O custo de uma geração depende dos dados: só as células
+ignorantes contam vizinhos, então, quanto mais a notícia já se espalhou, mais barata fica
+a geração. Por isso todas as versões partem da mesma grade, e por isso aumentar o
+percentual inicial de espalhadores *diminui* o tempo de execução. O mesmo efeito pode
+desbalancear a carga entre os trabalhadores: uma faixa com mais ignorantes demora mais.
+
+### Resultados
+
+Medidos em 23/11/2026 num notebook com Intel Core i5-12450H (8 núcleos físicos: 4 de
+desempenho e 4 de eficiência; 12 lógicos), 31,1 GiB de RAM, Ubuntu 22.04.5 e Python
+3.10.12. São 245 execuções (5 repetições de cada configuração); os
+dados brutos ficam em `experimentos/resultados/tempos_notebook.csv` e a tabela completa
+em `resumo_notebook.csv`.
+
+Cenário base (grade 500 x 500, 30 gerações, 5% de espalhadores). Tempo médio, speedup
+e eficiência; a sequencial levou **4,33 s** (desvio padrão de 0,17 s):
+
+| Versão | p = 1 | p = 2 | p = 4 | p = 8 |
+| --- | --- | --- | --- | --- |
+| Threads | 4,39 s · 0,99x · 99% | 4,15 s · 1,04x · 52% | 4,18 s · 1,03x · 26% | 4,38 s · 0,99x · 12% |
+| Processos | 4,53 s · 0,95x · 95% | 2,48 s · 1,74x · 87% | 1,48 s · 2,92x · 73% | 1,25 s · 3,47x · 43% |
+| Distribuída | 4,39 s · 0,98x · 98% | 2,32 s · 1,86x · 93% | 1,30 s · 3,32x · 83% | 1,05 s · 4,14x · 52% |
+
+**Threads: o GIL impede o ganho.** O speedup fica entre 0,99x e 1,04x com qualquer
+número de threads. O cálculo é Python puro, e o GIL deixa só uma thread executar
+bytecode por vez, então as threads se revezam em vez de calcular juntas. A eficiência
+cai como 1/p (52%, 26%, 12%), o mesmo efeito medido pelo Vinicius em
+`comparar_paralelismo.py`.
+
+**Processos: paralelismo real, com custo fixo.** Cada processo tem o seu próprio
+interpretador, e o speedup chega a 2,92x com 4 processos e 3,47x com 8. Com 1 processo
+a versão é 5% mais lenta que a sequencial (4,53 s contra 4,33 s): é o custo de criar o
+processo com `spawn` e a memória compartilhada. A eficiência cai de 73% (p = 4) para
+43% (p = 8) por três motivos: o processador só tem 4 núcleos de desempenho (os outros
+4 são mais lentos); a barreira de cada geração faz todos esperarem a faixa mais lenta
+(o custo depende de quantos ignorantes cada faixa tem); e o custo fixo de criação pesa
+mais quando o tempo total diminui (Amdahl, 1967).
+
+**Distribuída: o melhor speedup, com uma ressalva.** Ela chega a 4,14x com 8
+trabalhadores. Parte da vantagem sobre os processos vem da forma de medir: os
+trabalhadores já estão criados e conectados quando o tempo começa, enquanto a versão
+com processos inclui a criação deles. Com 1 trabalhador, o custo extra da distribuída
+é de só 0,07 s.
+
+**Comunicação.** A parcela do tempo gasta trocando fronteiras (média entre os
+trabalhadores, incluindo a espera pelo vizinho) cresce com o número de trabalhadores:
+
+| Trabalhadores | 1 | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- |
+| Comunicação | 0,0001 s (0%) | 0,043 s (2%) | 0,056 s (4%) | 0,215 s (21%) |
+
+Com 8 trabalhadores, cada um calcula só 62 ou 63 linhas por geração, mas continua
+enviando e recebendo duas linhas de fronteira e esperando os vizinhos. O cálculo por
+trabalhador diminui e a comunicação e a sincronização não, então a relação entre
+cálculo e comunicação piora.
+
+**Tamanho da grade (4 trabalhadores).** Grades maiores aproveitam melhor os
+trabalhadores: o speedup dos processos vai de 2,60x (250 x 250) para 2,85x (500 x 500)
+e 3,02x (1000 x 1000), e o da distribuída de 3,12x para 3,19x e 3,31x. O cálculo
+cresce com o número de células, e os custos fixos ficam relativamente menores
+(Gustafson, 1988). O tempo da sequencial cresce quase linearmente com o número de
+células: 1,12 s, 4,44 s e 17,86 s.
+
+**Percentual inicial e gerações.** Com mais espalhadores iniciais a simulação fica mais
+rápida (sequencial: 7,09 s com 1%, 4,38 s com 5% e 1,15 s com 20%), porque os
+ignorantes acabam antes e só eles contam vizinhos. Com 20%, o tempo total é tão curto
+que o custo fixo dos processos pesa mais, e o speedup deles cai para 2,73x. Pelo mesmo
+motivo, o tempo cresce menos que o número de gerações: 1,93 s com 10, 4,35 s com 30 e
+7,97 s com 60, porque as gerações finais são mais baratas.
+
+**Limitações.** Todas as medições foram feitas numa única máquina, com a distribuída
+em `127.0.0.1`, então os resultados não incluem a latência de uma rede real. As versões
+não medem exatamente o mesmo intervalo (ver "O que cada tempo inclui"). E um notebook
+varia de frequência com a temperatura: os desvios padrão ficaram entre 0,02 s e 0,63 s.
+
+## Melhoria — bots automatizados
+
+**O que é.** Uma fração das células passa a ser ocupada por bots: contas automáticas
+que espalham a fake news em todas as gerações e nunca ficam inativas. Estudos com dados
+reais de redes sociais mostram que bots amplificam conteúdo de baixa credibilidade,
+principalmente no início da propagação (Shao et al., 2018).
+
+**Como foi implementada.** Sem nenhuma mudança em `comum/modelo.py`. Na grade, o bot é
+uma célula no estado Espalhador como qualquer outra, então a regra de vizinhança já o
+conta como espalhador. A diferença está no fim de cada geração: `calcular_intervalo`
+transforma o bot em Inativo, como faria com uma pessoa, e `aplicar_bots`
+(`melhorias/bots.py`) o devolve ao estado Espalhador e corrige a contagem. As posições
+dos bots são sorteadas sem repetição e com semente fixa. Com a lista de bots vazia, a
+simulação é idêntica à sequencial, o que é verificado em `testes/testar_melhorias.py`.
+
+**Resultado.** Grade 200 x 200, 5% de espalhadores iniciais, até 60 gerações (tabela
+completa em `melhorias/saidas/estatisticas_bots.csv`). O alcance é a parcela das
+pessoas (sem contar os bots) que deixou de ser ignorante ao final:
+
+| Bots (% das células) | Alcance com limiar 2 | Alcance com limiar 3 |
+| --- | --- | --- |
+| 0% (sem bots) | 58,0% | 5,3% |
+| 0,1% | 60,8% | 5,4% |
+| 0,25% | 65,1% | 5,4% |
+| 0,5% | 73,5% | 5,5% |
+| 1% | 82,2% | 5,8% |
+| 2% | 91,7% | 6,7% |
+
+Com limiar 2, um ignorante vizinho de um bot já tem, permanentemente, um dos dois
+espalhadores de que precisa; basta uma pessoa espalhando por perto para convencê-lo. O
+bot reduz o limiar efetivo da sua vizinhança e funciona como uma fonte que nunca se
+esgota. Por isso, 0,5% de bots aumentam o alcance em 15,5 pontos percentuais, e a
+propagação também termina mais cedo (última geração com novos convencidos: 44 sem bots,
+25 com 2% de bots). Com limiar 3 a notícia quase não se espalha, e os bots, isolados,
+mudam pouco o resultado: eles só fazem diferença quando a população já é suscetível.
+
+**Limitações.** Os bots existem só na simulação sequencial (`melhorias/bots.py`); não
+foram levados às versões paralela e distribuída para não alterar o código delas, mas a
+extensão é direta: cada trabalhador aplicaria `aplicar_bots` às posições da sua faixa.
+Os bots ficam em posições aleatórias e fixas.
+
+```bash
+python melhorias/bots.py --percentual-bots 0.005
+```
+
+## Melhoria — visualização animada da propagação
+
+![Animação da propagação da fake news](melhorias/saidas/propagacao.gif)
+
+**O que é.** Uma animação em que cada célula é um quadradinho colorido pelo estado da
+pessoa (ignorante, espalhador, inativo e, se houver, bot). Ela mostra as frentes de
+propagação avançando sobre as regiões de ignorantes e deixando inativos para trás.
+
+**Como foi implementada.** `melhorias/animacao.py` roda a simulação numa grade pequena
+com a mesma função de cálculo do projeto (por meio de `rodar_simulacao_com_bots`),
+guarda uma cópia da grade de cada geração e monta a animação com `FuncAnimation`, do
+`matplotlib` (Hunter, 2007). O GIF é gravado com o `PillowWriter` (o Pillow já é instalado junto com o
+`matplotlib`). A animação só desenha o resultado; o cálculo não muda.
+
+```bash
+python melhorias/animacao.py                     # grava melhorias/saidas/propagacao.gif
+python melhorias/animacao.py --percentual-bots 0.005 --saida melhorias/saidas/propagacao_bots.gif
+python melhorias/animacao.py --mostrar           # abre numa janela (precisa do tkinter)
+```
+
+## Melhoria — estatísticas adicionais
+
+**O que é.** Métricas que resumem a propagação além das contagens por geração: alcance
+final, pico de pessoas espalhando e a geração em que ele ocorre, e a última geração com
+novos convencidos. Como no modelo cada pessoa espalha por uma única geração, o número
+de espalhadores de uma geração é exatamente o número de pessoas convencidas nela.
+
+![Evolução dos estados da população](melhorias/saidas/curvas_estados.png)
+
+**Resultado.** Sem bots, o número de espalhadores atinge o pico já na geração 2 (5,5% da
+população) e depois cai, até a propagação parar sozinha na geração 45 com 42% das pessoas
+sem nunca terem recebido a notícia. É o comportamento típico dos modelos de boato com
+ignorantes, espalhadores e inativos (Daley; Kendall, 1964; Maki; Thompson, 1973): o boato
+se extingue antes de alcançar todos. No modelo clássico, em que todos podem encontrar
+todos, cerca de 20% nunca ouvem o boato (Daley; Kendall, 1965). Na grade, a fração é
+maior porque cada pessoa só tem 8 vizinhos e precisa de 2 espalhadores ao mesmo tempo
+para ser convencida.
+
+**Como foi implementada.** `melhorias/estatisticas.py` tem as funções de cálculo (sem
+dependências externas) e `melhorias/graficos_estatisticas.py` gera os gráficos
+`curvas_estados.png` e `alcance_por_bots.png` e a tabela `estatisticas_bots.csv`, em
+`melhorias/saidas/`.
+
+```bash
+python melhorias/graficos_estatisticas.py
+```
+
+## Contribuição individual — Willian Kiyoshi Onuki
+
+Responsável pela medição de desempenho, pelos gráficos e por três melhorias:
+
+- **`experimentos/executar_experimentos.py`**: executa os mesmos cenários em todas as
+  versões, a partir da mesma grade inicial, com repetições, e grava cada tempo medido em
+  CSV junto com a configuração da máquina.
+- **`experimentos/medir_coordenador.py` e `experimentos/medir_trabalhador.py`**: medem
+  o tempo total e o tempo de comunicação da versão distribuída, reaproveitando as
+  funções da pasta `distribuida/` sem alterá-las.
+- **`experimentos/gerar_graficos.py`**: calcula média, desvio padrão, speedup e
+  eficiência, gera a tabela comparativa e os gráficos de tempo, speedup, eficiência e
+  comunicação.
+- **Melhoria — bots automatizados** (`melhorias/bots.py`): bots que nunca deixam de
+  espalhar, implementados sem alterar a regra comum do modelo.
+- **Melhoria — visualização animada** (`melhorias/animacao.py`): animação da
+  propagação em GIF ou em janela, para a demonstração.
+- **Melhoria — estatísticas adicionais** (`melhorias/estatisticas.py` e
+  `melhorias/graficos_estatisticas.py`): métricas de alcance, pico e duração, curvas dos
+  três estados e efeito do percentual de bots.
+- **`testes/testar_melhorias.py`**: garante que, sem bots, a simulação é idêntica à
+  sequencial, que os bots nunca ficam inativos e que as estatísticas batem com valores
+  calculados à mão.
+
+## Referências — experimentos e melhorias
+
+- AMDAHL, G. M. Validity of the single processor approach to achieving large scale
+  computing capabilities. In: AFIPS SPRING JOINT COMPUTER CONFERENCE, 1967, Atlantic
+  City. *Proceedings* [...]. New York: ACM, 1967. p. 483-485. DOI:
+  10.1145/1465482.1465560.
+- ANTHROPIC. *Claude*: assistente de inteligência artificial generativa, utilizado por
+  meio do Claude Code como apoio na escrita e revisão de código. [*S. l.*]: Anthropic,
+  2026. Disponível em: https://claude.ai. Acesso em: 23 nov. 2026.
+- DALEY, D. J.; KENDALL, D. G. Epidemics and rumours. *Nature*, v. 204, p. 1118, 1964.
+- DALEY, D. J.; KENDALL, D. G. Stochastic rumours. *IMA Journal of Applied
+  Mathematics*, v. 1, n. 1, p. 42-55, 1965.
+- GRAMA, A.; GUPTA, A.; KARYPIS, G.; KUMAR, V. *Introduction to parallel computing*.
+  2. ed. Harlow: Addison-Wesley, 2003. Cap. 5: Analytical modeling of parallel programs.
+- GUSTAFSON, J. L. Reevaluating Amdahl's law. *Communications of the ACM*, v. 31, n. 5,
+  p. 532-533, 1988.
+- HOEFLER, T.; BELLI, R. Scientific benchmarking of parallel computing systems: twelve
+  ways to tell the masses when reporting performance results. In: INTERNATIONAL
+  CONFERENCE FOR HIGH PERFORMANCE COMPUTING, NETWORKING, STORAGE AND ANALYSIS, 2015,
+  Austin. *Proceedings* [...]. New York: ACM, 2015. Art. 73, p. 1-12. DOI:
+  10.1145/2807591.2807644.
+- HUNTER, J. D. Matplotlib: a 2D graphics environment. *Computing in Science &
+  Engineering*, v. 9, n. 3, p. 90-95, 2007.
+- MAKI, D. P.; THOMPSON, M. *Mathematical models and applications*. Englewood Cliffs:
+  Prentice-Hall, 1973.
+- PYTHON SOFTWARE FOUNDATION. *The Python standard library*. Disponível em:
+  https://docs.python.org/3/library/. Acesso em: 23 nov. 2026.
+- SHAO, C. et al. The spread of low-credibility content by social bots. *Nature
+  Communications*, v. 9, art. 4787, 2018.
+

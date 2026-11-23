@@ -1,0 +1,15 @@
+Data: 2026-11-23T14:47:46
+Processador: 12th Gen Intel(R) Core(TM) i5-12450H
+Núcleos físicos: 8
+Núcleos lógicos: 12
+Memória RAM: 31.1 GiB
+Sistema operacional: Ubuntu 22.04.5 LTS (Linux-6.8.0-149-generic-x86_64-with-glibc2.35)
+Linguagem: Python 3.10.12 (CPython)
+Interpretador: /home/kiyoshi/Desktop/projetos/faculdade/Propaga-o-de-Fake-News-em-Sistemas-Paralelos-e-Distribu-dos/.venv/bin/python
+Versões medidas: sequencial, threads, processos, distribuida
+Repetições por cenário: 5
+Cenário base: 500x500, 30 gerações, 5% de espalhadores, limiar 2, semente 42
+Trabalhadores: [1, 2, 4, 8]
+Tamanhos: [250, 500, 1000]
+Gerações: [10, 30, 60]
+Percentuais: [0.01, 0.05, 0.2]
