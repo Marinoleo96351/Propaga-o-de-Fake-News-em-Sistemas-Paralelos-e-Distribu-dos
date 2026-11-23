@@ -15,33 +15,40 @@ from distribuida.protocolo import (
 
 
 def processar_tarefa(mensagem):
-    """Calcula o intervalo de linhas recebido do coordenador."""
+    """Calcula o intervalo recebido, utilizando linhas de fronteira."""
 
-    linhas = mensagem["linhas"]
     colunas = mensagem["colunas"]
+    linhas_locais = mensagem["linhas_locais"]
+    inicio_local = mensagem["inicio_local"]
+    fim_local = mensagem["fim_local"]
+
     inicio = mensagem["inicio"]
     fim = mensagem["fim"]
     limiar = mensagem["limiar"]
 
     grade_atual = decodificar_grade(mensagem["grade"])
-    grade_proxima = bytearray(linhas * colunas)
 
-    if len(grade_atual) != linhas * colunas:
-        raise ValueError("Tamanho da grade incompatível.")
+    if len(grade_atual) != linhas_locais * colunas:
+        raise ValueError("Tamanho da grade local incompatível.")
+
+    if not (0 <= inicio_local < fim_local <= linhas_locais):
+        raise ValueError("Intervalo local inválido.")
+
+    grade_proxima = bytearray(linhas_locais * colunas)
 
     contagem = calcular_intervalo(
         grade_atual,
         grade_proxima,
-        linhas,
+        linhas_locais,
         colunas,
-        inicio,
-        fim,
+        inicio_local,
+        fim_local,
         limiar,
     )
 
     resultado = bytearray()
 
-    for linha in range(inicio, fim):
+    for linha in range(inicio_local, fim_local):
         inicio_linha = linha * colunas
         fim_linha = inicio_linha + colunas
         resultado.extend(grade_proxima[inicio_linha:fim_linha])
