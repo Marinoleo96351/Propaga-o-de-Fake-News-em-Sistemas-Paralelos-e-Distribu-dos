@@ -2,7 +2,12 @@
 import argparse
 import csv
 import statistics
+import sys
 import time
+from pathlib import Path
+
+# Permite executar o arquivo diretamente a partir da pasta do projeto.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from comum.grade import criar_grade
 from paralelo_processos import rodar_simulacao as rodar_processos
@@ -95,3 +100,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
