@@ -6,3 +6,8 @@ venv/
 experimentos/resultados/*.csv
 experimentos/graficos/*.png
 *.grade
+
+# Arquivos gerados pela simulacao
+grade_distribuida.bin
+*.pyc
+__pycache__/
