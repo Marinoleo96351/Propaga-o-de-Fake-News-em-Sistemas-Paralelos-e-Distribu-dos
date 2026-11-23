@@ -138,6 +138,11 @@ Os testes `testes/testar_melhorias.py` verificam as melhorias de bots e estatís
 sem bots, a simulação é idêntica à sequencial; os bots nunca ficam inativos; e as
 estatísticas batem com valores calculados à mão.
 
+Os testes `testes/testar_distribuida.py` levantam um coordenador e trabalhadores
+reais conectados por sockets TCP em `127.0.0.1` (com 1, 2 e 4 trabalhadores) e
+comparam a grade final com o cálculo sequencial puro, confirmando que trocar as
+fronteiras diretamente entre vizinhos não muda o resultado do modelo.
+
 Também é possível verificar a compilação dos arquivos Python:
 
 ```bash
@@ -167,7 +172,8 @@ testes/
 ├── __init__.py
 ├── testar_correcao.py
 ├── testar_paralelo_vinicius.py
-└── testar_melhorias.py
+├── testar_melhorias.py
+└── testar_distribuida.py
 
 experimentos/
 ├── comparar_paralelismo.py
@@ -178,6 +184,7 @@ experimentos/
 
 melhorias/
 ├── bots.py
+├── probabilidade.py
 ├── animacao.py
 ├── estatisticas.py
 ├── graficos_estatisticas.py
@@ -232,6 +239,116 @@ Responsável pela base do projeto, sobre a qual as demais versões são constru�
 - **`testes/testar_paralelo_vinicius.py`**: compara os resultados das versões paralelas com o cálculo sequencial comum e verifica consistência entre faixas.
 - **`experimentos/comparar_paralelismo.py`**: mede tempos de threads e processos e grava tempos, medianas, speedup e eficiência em CSV para análise do efeito do GIL.
 - **Melhorias**: comparação entre threads e processos e probabilidade de convencimento configurável.
+
+## Melhoria 2 — threads contra processos (efeito do GIL)
+
+**O que é.** Comparação direta, na mesma máquina e com a mesma entrada, entre
+`paralelo_threads.py` e `paralelo_processos.py`, com 1, 2, 4 e 8 trabalhadores.
+
+**Por que foi feita.** O enunciado libera `threading` mesmo sabendo que, em
+Python puro, o GIL deixa só uma thread executar bytecode por vez. Medir as
+duas variantes com o mesmo código de cálculo transforma essa limitação da
+linguagem numa análise com números, em vez de uma afirmação sem evidência.
+
+**Como foi implementada.** `experimentos/comparar_paralelismo.py` roda as duas
+implementações várias vezes para cada quantidade de trabalhadores, mede com
+`time.perf_counter()` e grava tempos individuais, medianas, speedup e
+eficiência em `experimentos/tempos_paralelismo.csv`. O mesmo efeito aparece de
+novo, em outra máquina e outro cenário, nos experimentos completos da seção
+seguinte.
+
+**Impacto medido** (cenário base, grade 500 x 500, 30 gerações, 5%, limiar 2 —
+tabela completa na seção "Experimentos de desempenho"):
+
+| Trabalhadores | Threads (speedup) | Processos (speedup) |
+| --- | --- | --- |
+| 1 | 0,99x | 0,95x |
+| 2 | 1,04x | 1,74x |
+| 4 | 1,03x | 2,92x |
+| 8 | 0,99x | 3,47x |
+
+Com threads, o speedup nunca passa de 1,04x, porque o GIL faz as threads se
+revezarem em vez de calcular em paralelo; a eficiência cai como `1/p`. Com
+processos, cada um tem o próprio interpretador e o speedup chega a 3,47x com 8
+processos, ao custo de criar os processos e sincronizar a barreira a cada
+geração.
+
+**Referência.** AMDAHL (1967), sobre o limite que a parte não paralelizável
+impõe ao speedup, e a documentação oficial do módulo `threading` (ver seção
+"Versões paralelas locais"), sobre o Global Interpreter Lock.
+
+## Melhoria 3 — probabilidade de convencimento
+
+**O que é.** Em vez de um vizinho espalhador sempre contar para o limiar de
+convencimento, cada contato só convence com probabilidade `p` (parâmetro
+`--probabilidade`, de 0 a 1). Com `p = 1,0` a regra volta a ser a
+determinística original.
+
+**Por que foi feita.** A certeza da regra original (um vizinho espalhador
+sempre convence) é uma simplificação forte frente aos modelos de boato da
+literatura, que tratam o contato como uma chance de convencimento, não uma
+garantia (Daley; Kendall, 1964; Maki; Thompson, 1973). Tornar isso um
+parâmetro também permite estudar o quanto o alcance da fake news depende da
+sua "força de persuasão".
+
+**Como foi implementada.** `comum/probabilidade.py` usa um gerador de
+contador (hash do tipo SplitMix64): o sorteio de cada contato depende só da
+semente, da geração, da linha, da coluna e do número do vizinho — nunca de
+qual trabalhador calculou a célula. Essa é a técnica descrita por Salmon et
+al. (2011) para números aleatórios paralelos reprodutíveis, necessária para
+que dividir a grade em mais ou menos faixas continue dando exatamente o mesmo
+resultado (testado em `testes/testar_paralelo_vinicius.py`, com 1, 2, 4 e 7
+faixas, e com threads e processos). `paralelo_threads.py` e
+`paralelo_processos.py` aceitam `--probabilidade`; `melhorias/probabilidade.py`
+mede o alcance final para vários valores de `p` na mesma grade.
+
+**Impacto medido** (grade 200 x 200, 5% de espalhadores iniciais, semente 42,
+até 200 gerações — `python melhorias/probabilidade.py --limiar 1`):
+
+| Probabilidade | Alcance final | Gerações até parar |
+| --- | --- | --- |
+| 0,1 | 13,5% | 12 |
+| 0,3 | 90,4% | 24 |
+| 0,5 | 99,6% | 12 |
+| 1,0 (determinística) | 100,0% | 10 |
+
+Com limiar 2 (o usado no resto do projeto), o efeito é bem mais drástico: como
+um ignorante precisa de **dois** contatos bem-sucedidos na mesma geração, a
+propagação quase não sai do chão para `p` entre 0,1 e 0,5 (alcance de 4,9% a
+6,6%, contra 58,0% da versão determinística) — o limiar e a probabilidade se
+multiplicam, não se somam. A grade final não muda dividindo em 1, 4 ou 8
+faixas, confirmando que a probabilidade continua comparável entre a
+sequencial, a paralela e a distribuída.
+
+**Referência.** SALMON et al. (2011), sobre geradores de números aleatórios
+paralelos baseados em contador; DALEY; KENDALL (1964) e MAKI; THOMPSON (1973),
+sobre o papel da chance de contato nos modelos de boato.
+
+```bash
+python melhorias/probabilidade.py --linhas 200 --colunas 200 --limiar 1
+```
+
+## Contribuição individual — Arthur Henrique de Melo Almeida
+
+- **`distribuida/protocolo.py`**: mensagens com cabeçalho de tamanho fixo e
+  conteúdo em JSON (grades em Base64), `receber_exatamente` para tratar o
+  `recv` parcial do TCP, e as mensagens de registro, configuração, tarefa,
+  fronteira, resultado e encerramento.
+- **`distribuida/coordenador.py`**: divide a grade em blocos de linhas, aceita
+  a conexão de cada trabalhador, informa a cada um quem são os seus vizinhos
+  e por qual porta falar com eles, envia o bloco inicial, recebe o resultado
+  final de cada trabalhador e remonta a grade completa.
+- **`distribuida/trabalhador.py`**: conecta ao coordenador e aos vizinhos,
+  troca as linhas de fronteira **diretamente com os vizinhos** a cada geração
+  (sem passar pelo coordenador), calcula o bloco com a mesma função
+  `calcular_intervalo` das outras versões e devolve o resultado.
+- **Melhoria 7** (troca direta de fronteiras entre vizinhos): em vez de cada
+  trabalhador mandar a borda ao coordenador para ele repassar, os
+  trabalhadores abrem conexão entre si (`trocar_fronteiras`), o que reduz o
+  número de mensagens e evita que o coordenador seja um gargalo de
+  comunicação — analisado com números medidos na seção "Comunicação" dos
+  experimentos de desempenho.
+- Revisão dos Pull Requests do Willian.
 
 ## Experimentos de desempenho
 
@@ -551,6 +668,11 @@ Responsável pela medição de desempenho, pelos gráficos e por três melhorias
   Prentice-Hall, 1973.
 - PYTHON SOFTWARE FOUNDATION. *The Python standard library*. Disponível em:
   https://docs.python.org/3/library/. Acesso em: 23 nov. 2026.
+- SALMON, J. K.; MORAES, M. A.; DROR, R. O.; SHAW, D. E. Parallel random
+  numbers: as easy as 1, 2, 3. In: INTERNATIONAL CONFERENCE FOR HIGH
+  PERFORMANCE COMPUTING, NETWORKING, STORAGE AND ANALYSIS (SC11), 2011,
+  Seattle. *Proceedings* [...]. New York: ACM, 2011. Art. 16, p. 1-12. DOI:
+  10.1145/2063384.2063405.
 - SHAO, C. et al. The spread of low-credibility content by social bots. *Nature
   Communications*, v. 9, art. 4787, 2018.
 
