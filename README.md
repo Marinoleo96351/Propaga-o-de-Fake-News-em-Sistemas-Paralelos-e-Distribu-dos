@@ -44,6 +44,54 @@ Opções principais:
 - `--salvar-grade arquivo.grade`: salva a grade inicial.
 - `--arquivo-grade arquivo.grade`: carrega uma grade inicial de um arquivo.
 
+### Versões paralelas locais
+
+As duas versões paralelas aceitam as mesmas opções principais da versão sequencial,
+incluindo `--arquivo-grade`, `--salvar-grade`, `--limiar`, `--semente`,
+`--probabilidade` e `--trabalhadores`.
+
+```bash
+python paralelo_threads.py --linhas 100 --colunas 100 --geracoes 50 --limiar 2 --trabalhadores 4
+python paralelo_processos.py --linhas 100 --colunas 100 --geracoes 50 --limiar 2 --trabalhadores 4
+```
+
+Para comparar as versões partindo da mesma entrada, salve uma grade com a
+sequencial e passe o arquivo às duas versões paralelas. Use
+`--sem-parada-antecipada --sem-impressao` para executar um número fixo de
+gerações e reduzir o custo de saída no terminal.
+
+`paralelo_threads.py` reparte faixas de linhas entre threads e sincroniza cada
+geração com uma barreira. Como o cálculo é Python puro, o GIL pode limitar o
+ganho de desempenho das threads. `paralelo_processos.py` mantém processos
+trabalhadores ativos durante a simulação e compartilha os dois buffers da grade
+com `multiprocessing.shared_memory`, evitando copiar a grade por pickle a cada
+geração.
+
+O argumento opcional `--probabilidade` define a chance de cada contato com um
+espalhador convencer uma célula ignorante (padrão `1.0`, que reproduz a regra
+determinística). No modo probabilístico, `--semente` torna o resultado
+reproduzível e independente da quantidade de trabalhadores.
+
+### Experimento de threads e processos
+
+Execute o benchmark na mesma máquina e com a mesma entrada para comparar o
+efeito do GIL com o custo de criação e sincronização dos processos:
+
+```bash
+python experimentos/comparar_paralelismo.py --linhas 100 --colunas 100 --geracoes 20 --repeticoes 3 --trabalhadores 1 2 4
+```
+
+O script roda as duas implementações com cada quantidade de trabalhadores,
+mede cada execução com `time.perf_counter()` e grava os tempos individuais,
+medianas, speedup e eficiência em `experimentos/tempos_paralelismo.csv`. Ele
+usa a mesma grade e semente para cada configuração; não inclui tempos
+estimados. Execute o benchmark na máquina da apresentação e use os valores
+gerados no CSV para os gráficos e slides.
+
+Referências técnicas: [threading e GIL](https://docs.python.org/3.14/library/threading.html),
+[memória compartilhada](https://docs.python.org/3.14/library/multiprocessing.shared_memory.html)
+e [`time.perf_counter`](https://docs.python.org/3.14/library/time.html#time.perf_counter).
+
 ### Versão distribuída
 
 A versão distribuída utiliza comunicação TCP com sockets. O coordenador divide a grade em blocos de linhas e envia cada bloco para um trabalhador. Durante a simulação, os trabalhadores trocam diretamente as linhas de fronteira com seus vizinhos para calcular as gerações corretamente.
@@ -82,10 +130,14 @@ Para executar os testes automatizados:
 python -m unittest discover -v
 ```
 
+Os testes `testes/testar_paralelo_vinicius.py` comparam threads e processos à
+função sequencial comum e verificam que a probabilidade não muda quando o
+número de faixas é alterado.
+
 Também é possível verificar a compilação dos arquivos Python:
 
 ```bash
-python -m py_compile sequencial.py comum/*.py distribuida/*.py
+python -m py_compile sequencial.py paralelo_threads.py paralelo_processos.py comum/*.py distribuida/*.py experimentos/*.py
 ```
 
 Os testes verificam se a divisão da grade em faixas de linhas mantém o mesmo resultado do cálculo da grade inteira e se a versão refatorada preserva o comportamento do código original fornecido pelo professor (`original/FakeNews.py`).
@@ -98,7 +150,8 @@ Além disso, foram realizados testes de comparação entre as versões sequencia
 comum/
 ├── __init__.py
 ├── modelo.py
-└── grade.py
+├── grade.py
+└── probabilidade.py
 
 distribuida/
 ├── __init__.py
@@ -108,12 +161,19 @@ distribuida/
 
 testes/
 ├── __init__.py
-└── testar_correcao.py
+├── testar_correcao.py
+└── testar_paralelo_vinicius.py
+
+experimentos/
+└── comparar_paralelismo.py
 
 original/
 └── FakeNews.py
 
 sequencial.py
+paralelo_threads.py
+paralelo_processos.py
+experimentos/comparar_paralelismo.py
 README.md
 requirements.txt
 .gitignore
@@ -147,3 +207,12 @@ Responsável pela base do projeto, sobre a qual as demais versões são constru�
 - **`testes/testar_correcao.py`**: testes automatizados que comparam a refatoração com o código original e verificam se a divisão do cálculo em faixas de linhas preserva o resultado.
 - **Melhoria 1** (`bytearray` e duas grades alternadas): implementação e medição de desempenho descritas na seção acima.
 - Organização inicial do repositório (estrutura de pastas, `.gitignore`, `requirements.txt`) e abertura do primeiro Pull Request (`sequencial` → `main`).
+
+## Contribuição individual — Vinicius Luiz Andretta Ferracini
+
+- **`paralelo_threads.py`**: divide a grade em faixas de linhas para threads e sincroniza cada geração com uma barreira.
+- **`paralelo_processos.py`**: mantém processos trabalhadores e dois buffers de grade em `multiprocessing.shared_memory`.
+- **`comum/probabilidade.py`**: aplica chance de convencimento com sorteio determinístico por geração e célula, mantendo os resultados reproduzíveis entre partições.
+- **`testes/testar_paralelo_vinicius.py`**: compara os resultados das versões paralelas com o cálculo sequencial comum e verifica consistência entre faixas.
+- **`experimentos/comparar_paralelismo.py`**: mede tempos de threads e processos e grava tempos, medianas, speedup e eficiência em CSV para análise do efeito do GIL.
+- **Melhorias**: comparação entre threads e processos e probabilidade de convencimento configurável.
