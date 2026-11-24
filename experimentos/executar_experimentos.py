@@ -64,8 +64,8 @@ TEMPO_LIMITE_SEGUNDOS = 600
 
 COLUNAS_CSV = [
     "experimento", "versao", "linhas", "colunas", "geracoes", "percentual", "limiar",
-    "trabalhadores", "repeticao", "tempo_s", "tempo_comunicacao_s", "bytes_enviados",
-    "python", "data_hora",
+    "trabalhadores", "repeticao", "tempo_s", "tempo_calculo_s", "tempo_comunicacao_s",
+    "tempo_espera_s", "bytes_enviados", "python", "data_hora",
 ]
 
 
@@ -171,8 +171,8 @@ def executar_distribuida(execucao, porta):
 
     A versão distribuída cria a grade inicial com criar_grade e a mesma
     semente, então parte exatamente da mesma grade dos arquivos .grade.
-    Devolve o tempo total (do coordenador) e o tempo médio de comunicação
-    entre os trabalhadores, como texto.
+    Devolve o tempo total (do coordenador) e a média, entre os trabalhadores,
+    dos tempos de cálculo, comunicação e espera, como texto.
     """
     trabalhadores = execucao["trabalhadores"]
     comando_coordenador = [
@@ -214,20 +214,29 @@ def executar_distribuida(execucao, porta):
         if processo.returncode != 0:
             sys.exit(f"Erro em um trabalhador:\n{erro}")
 
+    tempos_calculo = [float(ler_valor(saida, "Tempo de cálculo")) for saida, _ in saidas]
     tempos_comunicacao = [float(ler_valor(saida, "Tempo de comunicação")) for saida, _ in saidas]
-    return ler_valor(saida_coordenador, "Tempo total"), f"{statistics.mean(tempos_comunicacao):.6f}"
+    tempos_espera = [float(ler_valor(saida, "Tempo de espera")) for saida, _ in saidas]
+    return (
+        ler_valor(saida_coordenador, "Tempo total"),
+        f"{statistics.mean(tempos_calculo):.6f}",
+        f"{statistics.mean(tempos_comunicacao):.6f}",
+        f"{statistics.mean(tempos_espera):.6f}",
+    )
 
 
 def medir(execucao, numero):
-    """Faz uma medição e devolve (tempo total, tempo de comunicação, bytes
-    enviados), como texto; os dois últimos ficam vazios quando a versão não
-    os informa."""
+    """Faz uma medição e devolve (tempo total, tempo de cálculo, tempo de
+    comunicação, tempo de espera, bytes enviados), como texto; os campos que
+    a versão não informa ficam vazios."""
     if execucao["versao"] == "distribuida":
-        tempo, comunicacao = executar_distribuida(execucao, PORTA_INICIAL + (numero % 100) * 10)
-        return tempo, comunicacao, ""
+        tempo, calculo, comunicacao, espera = executar_distribuida(
+            execucao, PORTA_INICIAL + (numero % 100) * 10
+        )
+        return tempo, calculo, comunicacao, espera, ""
 
     saida = executar(montar_comando(execucao))
-    return (ler_valor(saida, "Tempo total"), ler_valor(saida, "Tempo de comunicação"),
+    return (ler_valor(saida, "Tempo total"), "", ler_valor(saida, "Tempo de comunicação"), "",
             ler_valor(saida, "Bytes enviados"))
 
 
@@ -351,7 +360,7 @@ def main():
         # ou mudar de frequência no meio, o efeito se espalha por todas as versões.
         for repeticao in range(1, argumentos.repeticoes + 1):
             for execucao in execucoes:
-                tempo, comunicacao, bytes_enviados = medir(execucao, feitas)
+                tempo, calculo, comunicacao, espera, bytes_enviados = medir(execucao, feitas)
                 if not tempo:
                     sys.exit(f"A versão '{execucao['versao']}' não imprimiu a linha 'Tempo total'.")
 
@@ -366,7 +375,9 @@ def main():
                     "trabalhadores": execucao["trabalhadores"],
                     "repeticao": repeticao,
                     "tempo_s": tempo,
+                    "tempo_calculo_s": calculo,
                     "tempo_comunicacao_s": comunicacao,
+                    "tempo_espera_s": espera,
                     "bytes_enviados": bytes_enviados,
                     "python": platform.python_version(),
                     "data_hora": datetime.datetime.now().isoformat(timespec="seconds"),

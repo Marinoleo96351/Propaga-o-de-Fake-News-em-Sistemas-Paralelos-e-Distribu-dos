@@ -50,7 +50,8 @@ COR_EIXO = "#c3c2b7"
 COLUNAS_RESUMO = [
     "experimento", "versao", "linhas", "colunas", "geracoes", "percentual", "trabalhadores",
     "repeticoes", "tempo_medio_s", "desvio_padrao_s", "speedup", "eficiencia",
-    "tempo_comunicacao_medio_s", "bytes_enviados_medio",
+    "tempo_calculo_medio_s", "tempo_comunicacao_medio_s", "tempo_espera_medio_s",
+    "bytes_enviados_medio",
 ]
 
 
@@ -68,8 +69,12 @@ def ler_tempos(caminho):
                 "percentual": float(linha["percentual"]),
                 "trabalhadores": int(linha["trabalhadores"]),
                 "tempo_s": float(linha["tempo_s"]),
-                # Só a versão distribuída preenche estas duas colunas.
-                "tempo_comunicacao_s": float(linha["tempo_comunicacao_s"]) if linha["tempo_comunicacao_s"] else None,
+                # Só a versão distribuída preenche estas colunas. "tempo_calculo_s" e
+                # "tempo_espera_s" não existem em CSVs gerados antes dessa separação
+                # (.get() devolve None nesse caso, em vez de dar erro).
+                "tempo_calculo_s": float(linha["tempo_calculo_s"]) if linha.get("tempo_calculo_s") else None,
+                "tempo_comunicacao_s": float(linha["tempo_comunicacao_s"]) if linha.get("tempo_comunicacao_s") else None,
+                "tempo_espera_s": float(linha["tempo_espera_s"]) if linha.get("tempo_espera_s") else None,
                 "bytes_enviados": int(linha["bytes_enviados"]) if linha["bytes_enviados"] else None,
             })
     return execucoes
@@ -126,7 +131,9 @@ def montar_resumo(execucoes):
             "geracoes": geracoes, "percentual": percentual, "trabalhadores": trabalhadores,
             "repeticoes": len(tempos), "tempo_medio_s": tempo_medio, "desvio_padrao_s": desvio,
             "speedup": speedup, "eficiencia": eficiencia,
+            "tempo_calculo_medio_s": media_ou_vazio(r["tempo_calculo_s"] for r in repeticoes),
             "tempo_comunicacao_medio_s": media_ou_vazio(r["tempo_comunicacao_s"] for r in repeticoes),
+            "tempo_espera_medio_s": media_ou_vazio(r["tempo_espera_s"] for r in repeticoes),
             "bytes_enviados_medio": media_ou_vazio(r["bytes_enviados"] for r in repeticoes),
         })
     return resumo
@@ -338,13 +345,15 @@ def grafico_tempo_por_parametro(resumo, experimento, titulo, rotulo_x, valor_x, 
 
 
 def grafico_comunicacao(resumo):
-    """Divide o tempo da versão distribuída em cálculo e comunicação.
+    """Divide o tempo da versão distribuída em cálculo, comunicação e espera.
 
-    Usa o tempo de comunicação medido pela própria versão distribuída. Se ela
-    não informar esse tempo, mostra a diferença T_distribuída - T_processos
-    para o mesmo número de trabalhadores, deixando claro no título que é uma
-    estimativa (as duas versões fazem o mesmo cálculo; o que muda é a troca de
-    mensagens por socket).
+    Usa os três tempos medidos pela própria versão distribuída
+    (experimentos/medir_trabalhador.py). Em CSVs gerados antes dessa
+    separação (só com o tempo de comunicação, comunicação+espera juntos),
+    cai para duas partes; se nem isso houver, mostra a diferença
+    T_distribuída - T_processos para o mesmo número de trabalhadores,
+    deixando claro no título que é uma estimativa (as duas versões fazem o
+    mesmo cálculo; o que muda é a troca de mensagens por socket).
     """
     distribuida = filtrar(resumo, "trabalhadores", "distribuida", "trabalhadores")
     if not distribuida:
@@ -355,7 +364,28 @@ def grafico_comunicacao(resumo):
     trabalhadores = [l["trabalhadores"] for l in distribuida]
     posicoes = range(len(trabalhadores))
 
-    if all(l["tempo_comunicacao_medio_s"] is not None for l in distribuida):
+    if all(l["tempo_calculo_medio_s"] is not None and l["tempo_espera_medio_s"] is not None
+           for l in distribuida):
+        calculo = [l["tempo_calculo_medio_s"] for l in distribuida]
+        comunicacao = [l["tempo_comunicacao_medio_s"] for l in distribuida]
+        espera = [l["tempo_espera_medio_s"] for l in distribuida]
+        figura, eixo = novo_grafico("Custo de comunicação na versão distribuída",
+                                    descrever_cenario(referencia, "trabalhadores") +
+                                    "\nCálculo, comunicação (envio) e espera (recepção), média entre os trabalhadores",
+                                    "Número de trabalhadores (p)", "Tempo de execução (s)")
+        # A borda branca deixa um espaço entre as partes da barra.
+        eixo.bar(posicoes, calculo, width=0.5, color=ESTILO_VERSOES["distribuida"]["cor"],
+                 edgecolor="white", linewidth=1.5, label="Cálculo")
+        eixo.bar(posicoes, comunicacao, width=0.5, bottom=calculo, color=COR_COMUNICACAO,
+                 edgecolor="white", linewidth=1.5, label="Comunicação (envio)")
+        base_espera = [c + com for c, com in zip(calculo, comunicacao)]
+        eixo.bar(posicoes, espera, width=0.5, bottom=base_espera, color="#c0392b",
+                 edgecolor="white", linewidth=1.5, label="Espera (recepção)")
+        for posicao, linha, com, esp in zip(posicoes, distribuida, comunicacao, espera):
+            eixo.annotate(f"{(com + esp) / linha['tempo_medio_s']:.0%} comunicação+espera",
+                          (posicao, linha["tempo_medio_s"]),
+                          xytext=(0, 4), textcoords="offset points", ha="center", fontsize=9, color=COR_TEXTO)
+    elif all(l["tempo_comunicacao_medio_s"] is not None for l in distribuida):
         comunicacao = [l["tempo_comunicacao_medio_s"] for l in distribuida]
         calculo = [l["tempo_medio_s"] - c for l, c in zip(distribuida, comunicacao)]
         figura, eixo = novo_grafico("Custo de comunicação na versão distribuída",

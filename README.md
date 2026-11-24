@@ -380,8 +380,11 @@ execução é repetida 5 vezes:
   - `experimentos/medir_coordenador.py` faz o mesmo que o coordenador e mede o tempo de
     `executar_simulacao` (envio dos blocos, todas as gerações e recebimento dos
     resultados), depois que todos os trabalhadores já se conectaram;
-  - `experimentos/medir_trabalhador.py` roda o trabalhador trocando a função
-    `trocar_fronteiras` por uma versão que mede quanto tempo se passa dentro dela.
+  - `experimentos/medir_trabalhador.py` roda o trabalhador trocando duas funções por
+    versões que medem: `calcular_bloco` (tempo de **cálculo**, somado ao longo das
+    gerações) e `trocar_fronteiras`, dividida em **comunicação** (o envio das bordas
+    aos vizinhos) e **espera** (o tempo bloqueado em `receber_mensagem`, esperando o
+    vizinho terminar a própria geração e responder).
 
   A distribuída cria a grade com `criar_grade` e a mesma semente, então parte
   exatamente da mesma grade dos arquivos. Antes das medições, conferimos que ela chega à
@@ -443,12 +446,15 @@ trabalho que não se divide entre os trabalhadores limita o speedup máximo (Amd
 1967), e problemas maiores tendem a aproveitar melhor mais trabalhadores, porque o
 cálculo cresce mais que o custo fixo de coordenação (Gustafson, 1988).
 
-**Comunicação.** O tempo de comunicação registrado é a média, entre os trabalhadores,
-do tempo gasto em `trocar_fronteiras`. Ele inclui codificar as linhas de fronteira
-(Base64 em JSON), enviá-las, receber as dos vizinhos e esperar o vizinho mais lento
-terminar a geração anterior; portanto mede comunicação e sincronização juntas. O
-gráfico `comunicacao.png` divide o tempo total da distribuída nessa parte e no
-restante (cálculo, envio e recebimento da grade).
+**Comunicação.** `experimentos/medir_trabalhador.py` registra três tempos separados,
+somados ao longo das gerações e com a média tirada entre os trabalhadores: **cálculo**
+(a função que calcula a faixa, igual à sequencial), **comunicação** (só o envio das
+linhas de fronteira aos vizinhos) e **espera** (o tempo bloqueado esperando a borda do
+vizinho, dominado por ele terminar a própria geração, não pelo tamanho da mensagem). O
+CSV grava os três em `tempo_calculo_s`, `tempo_comunicacao_s` e `tempo_espera_s`, e o
+gráfico `comunicacao.png` empilha as três partes. Os resultados abaixo foram medidos
+antes dessa separação, com comunicação e espera somadas numa só coluna; reexecutar
+`executar_experimentos.py` já grava as três colunas.
 
 **Observação para a análise.** O custo de uma geração depende dos dados: só as células
 ignorantes contam vizinhos, então, quanto mais a notícia já se espalhou, mais barata fica
@@ -625,8 +631,8 @@ Responsável pela medição de desempenho, pelos gráficos e por três melhorias
   versões, a partir da mesma grade inicial, com repetições, e grava cada tempo medido em
   CSV junto com a configuração da máquina.
 - **`experimentos/medir_coordenador.py` e `experimentos/medir_trabalhador.py`**: medem
-  o tempo total e o tempo de comunicação da versão distribuída, reaproveitando as
-  funções da pasta `distribuida/` sem alterá-las.
+  o tempo total e, separadamente, o tempo de cálculo, comunicação e espera da versão
+  distribuída, reaproveitando as funções da pasta `distribuida/` sem alterá-las.
 - **`experimentos/gerar_graficos.py`**: calcula média, desvio padrão, speedup e
   eficiência, gera a tabela comparativa e os gráficos de tempo, speedup, eficiência e
   comunicação.
