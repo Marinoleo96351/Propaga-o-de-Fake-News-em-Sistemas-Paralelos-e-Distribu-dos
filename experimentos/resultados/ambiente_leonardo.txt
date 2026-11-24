@@ -1,0 +1,15 @@
+Data: 2026-11-23T21:14:30
+Processador: Intel64 Family 6 Model 186 Stepping 2, GenuineIntel
+Núcleos físicos: não identificado (preencher manualmente)
+Núcleos lógicos: 12
+Memória RAM: não identificada (preencher manualmente)
+Sistema operacional: Windows-11-10.0.26200-SP0
+Linguagem: Python 3.14.5 (CPython)
+Interpretador: C:\Users\Pc\AppData\Local\Python\pythoncore-3.14-64\python.exe
+Versões medidas: sequencial, threads, processos, distribuida
+Repetições por cenário: 5
+Cenário base: 500x500, 30 gerações, 5% de espalhadores, limiar 2, semente 42
+Trabalhadores: [1, 2, 4, 8]
+Tamanhos: [250, 500, 1000]
+Gerações: [10, 30, 60]
+Percentuais: [0.01, 0.05, 0.2]
